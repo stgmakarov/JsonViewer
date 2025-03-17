@@ -22,6 +22,7 @@ public class JsonViewer {
     private final JLabel totalLabel;
     private final List<Map<String, String>> allData = new ArrayList<>();
     private final Set<String> columns = new LinkedHashSet<>();
+    private final JPanel filterPanel;
 
     public JsonViewer() {
         frame = new JFrame("JSON Viewer");
@@ -32,7 +33,7 @@ public class JsonViewer {
         tableModel = new DefaultTableModel();
         table = new JTable(tableModel);
 
-        JPanel filterPanel = new JPanel();
+        filterPanel = new JPanel();
         filterPanel.setLayout(new BoxLayout(filterPanel, BoxLayout.Y_AXIS));
         JScrollPane filterScroll = new JScrollPane(filterPanel);
         filterScroll.setPreferredSize(new Dimension(250, frame.getHeight()));
@@ -97,39 +98,55 @@ public class JsonViewer {
                     columns.addAll(row.keySet());
                 }
             }
-            updateTable();
+            applyFilter(); // Автоматически обновляем таблицу после загрузки данных
         } catch (Exception e) {
             JOptionPane.showMessageDialog(frame, "Error reading files: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 
-    private void updateTable() {
+    private void applyFilter() {
+        tableModel.setRowCount(0);
+        List<Map<String, String>> filteredData = new ArrayList<>();
+        double total = 0;
+
+        for (Map<String, String> row : allData) {
+            boolean matches = filterFields.entrySet().stream()
+                    .allMatch(entry -> entry.getValue().getText().trim().isEmpty() || entry.getValue().getText().trim().equals(row.getOrDefault(entry.getKey(), "")));
+
+            if (matches) {
+                filteredData.add(row);
+                if (row.containsKey("samount")) {
+                    try {
+                        total += Double.parseDouble(row.get("samount"));
+                    } catch (NumberFormatException ignored) {}
+                }
+            }
+        }
+
+        totalLabel.setText("Total: " + total);
+        updateTable(filteredData);
+    }
+
+    private void updateTable(List<Map<String, String>> visibleData) {
         tableModel.setRowCount(0);
 
+        // Определяем непустые колонки на основе отфильтрованных данных
         Set<String> nonEmptyColumns = new LinkedHashSet<>(columns);
         for (String col : columns) {
-            if (allData.stream().allMatch(row -> row.getOrDefault(col, "").isEmpty())) {
+            if (visibleData.stream().noneMatch(row -> row.containsKey(col) && !row.get(col).isEmpty())) {
                 nonEmptyColumns.remove(col);
             }
         }
 
         tableModel.setColumnIdentifiers(nonEmptyColumns.toArray());
 
-        double total = 0;
-        for (Map<String, String> row : allData) {
+        for (Map<String, String> row : visibleData) {
             Object[] rowData = nonEmptyColumns.stream().map(col -> row.getOrDefault(col, "")).toArray();
             tableModel.addRow(rowData);
-
-            if (row.containsKey("samount")) {
-                try {
-                    total += Double.parseDouble(row.get("samount"));
-                } catch (NumberFormatException ignored) {}
-            }
         }
-        totalLabel.setText("Total: " + total);
 
         adjustColumnWidths();
-        updateFilters(nonEmptyColumns);
+        updateFilterFields(nonEmptyColumns);
     }
 
     private void adjustColumnWidths() {
@@ -146,9 +163,14 @@ public class JsonViewer {
         }
     }
 
-    private void updateFilters(Set<String> nonEmptyColumns) {
+    private void updateFilterFields(Set<String> nonEmptyColumns) {
+        // Сохраняем текущие значения фильтров перед обновлением
+        Map<String, String> previousFilters = new HashMap<>();
+        for (Map.Entry<String, JTextField> entry : filterFields.entrySet()) {
+            previousFilters.put(entry.getKey(), entry.getValue().getText());
+        }
+
         filterFields.clear();
-        JPanel filterPanel = (JPanel) ((JViewport) ((JScrollPane) frame.getContentPane().getComponent(0)).getComponent(0)).getComponent(0);
         filterPanel.removeAll();
 
         List<String> sortedColumns = new ArrayList<>(nonEmptyColumns);
@@ -156,37 +178,19 @@ public class JsonViewer {
 
         for (String column : sortedColumns) {
             JTextField field = new JTextField(10);
+            field.setText(previousFilters.getOrDefault(column, "")); // Восстанавливаем значение фильтра
             filterFields.put(column, field);
             JPanel rowPanel = new JPanel();
             rowPanel.add(new JLabel(column + ":"));
             rowPanel.add(field);
             filterPanel.add(rowPanel);
         }
+
         JButton filterButton = new JButton("Filter");
         filterButton.addActionListener(e -> applyFilter());
         filterPanel.add(filterButton);
         filterPanel.revalidate();
         filterPanel.repaint();
-    }
-
-    private void applyFilter() {
-        tableModel.setRowCount(0);
-        double total = 0;
-
-        for (Map<String, String> row : allData) {
-            boolean matches = filterFields.entrySet().stream()
-                    .allMatch(entry -> entry.getValue().getText().trim().isEmpty() || entry.getValue().getText().trim().equals(row.getOrDefault(entry.getKey(), "")));
-
-            if (matches) {
-                tableModel.addRow(columns.stream().map(col -> row.getOrDefault(col, "")).toArray());
-                if (row.containsKey("samount")) {
-                    try {
-                        total += Double.parseDouble(row.get("samount"));
-                    } catch (NumberFormatException ignored) {}
-                }
-            }
-        }
-        totalLabel.setText("Total: " + total);
     }
 
     public static void main(String[] args) {

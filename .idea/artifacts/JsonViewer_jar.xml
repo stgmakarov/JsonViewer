@@ -1,0 +1,14 @@
+<component name="ArtifactManager">
+  <artifact type="jar" name="JsonViewer:jar">
+    <output-path>$PROJECT_DIR$/out/artifacts/JsonViewer_jar</output-path>
+    <root id="archive" name="JsonViewer.jar">
+      <element id="module-output" name="JsonViewer" />
+      <element id="extracted-dir" path="$MAVEN_REPOSITORY$/com/fasterxml/jackson/core/jackson-databind/2.18.3/jackson-databind-2.18.3.jar" path-in-jar="/" />
+      <element id="extracted-dir" path="$MAVEN_REPOSITORY$/com/fasterxml/jackson/core/jackson-annotations/2.18.3/jackson-annotations-2.18.3.jar" path-in-jar="/" />
+      <element id="extracted-dir" path="$MAVEN_REPOSITORY$/com/fasterxml/jackson/core/jackson-core/2.18.3/jackson-core-2.18.3.jar" path-in-jar="/" />
+      <element id="library" level="project" name="Maven: com.fasterxml.jackson.core:jackson-annotations:2.18.3" />
+      <element id="library" level="project" name="Maven: com.fasterxml.jackson.core:jackson-core:2.18.3" />
+      <element id="library" level="project" name="Maven: com.fasterxml.jackson.core:jackson-databind:2.18.3" />
+    </root>
+  </artifact>
+</component>
