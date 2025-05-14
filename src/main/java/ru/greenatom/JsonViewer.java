@@ -18,11 +18,11 @@ public class JsonViewer {
     private final JFrame frame;
     private final JTable table;
     private final DefaultTableModel tableModel;
-    private final Map<String, JTextField> filterFields = new HashMap<>();
+    private final Map<String, JPanel> filterPanels = new LinkedHashMap<>();
+    private final Map<String, List<JTextField>> filterFields = new HashMap<>();
     private final JLabel totalLabel;
     private final List<Map<String, String>> allData = new ArrayList<>();
-    private final Set<String> columns = new LinkedHashSet<>();
-    private final JPanel filterPanel;
+    private Set<String> currentColumns = new LinkedHashSet<>();
 
     public JsonViewer() {
         frame = new JFrame("JSON Viewer");
@@ -33,17 +33,7 @@ public class JsonViewer {
         tableModel = new DefaultTableModel();
         table = new JTable(tableModel);
 
-        filterPanel = new JPanel();
-        filterPanel.setLayout(new BoxLayout(filterPanel, BoxLayout.Y_AXIS));
-        JScrollPane filterScroll = new JScrollPane(filterPanel);
-        filterScroll.setPreferredSize(new Dimension(250, frame.getHeight()));
-
-        JButton filterButton = new JButton("Filter");
-        filterButton.addActionListener(e -> applyFilter());
-        filterPanel.add(filterButton);
-
         totalLabel = new JLabel("Total: 0");
-
         JButton openButton = new JButton("Open Folder");
         openButton.addActionListener(e -> openFolder());
 
@@ -51,7 +41,6 @@ public class JsonViewer {
         bottomPanel.add(openButton);
         bottomPanel.add(totalLabel);
 
-        frame.add(filterScroll, BorderLayout.WEST);
         frame.add(new JScrollPane(table), BorderLayout.CENTER);
         frame.add(bottomPanel, BorderLayout.SOUTH);
 
@@ -62,20 +51,21 @@ public class JsonViewer {
         JFileChooser chooser = new JFileChooser();
         chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
         if (chooser.showOpenDialog(frame) == JFileChooser.APPROVE_OPTION) {
-            File folder = chooser.getSelectedFile();
-            loadJsonFiles(folder.toPath());
+            Path folder = chooser.getSelectedFile().toPath();
+            loadJsonFiles(folder);
+            buildFilterPanel();
         }
     }
 
     private void loadJsonFiles(Path folder) {
         allData.clear();
-        columns.clear();
-
+        currentColumns.clear();
         ObjectMapper mapper = new ObjectMapper();
+
         try {
             List<Path> files = Files.list(folder)
                     .filter(path -> path.toString().endsWith(".json") || !path.toString().contains("."))
-                    .collect(Collectors.toList());
+                    .toList();
 
             for (Path file : files) {
                 JsonNode root = mapper.readTree(file.toFile());
@@ -92,108 +82,134 @@ public class JsonViewer {
                     row.put("structure", structure);
                     row.put("gaentity", gaentity);
                     row.put("gaperiod", gaperiod);
-
-                    item.fields().forEachRemaining(field -> row.put(field.getKey(), field.getValue().asText()));
+                    item.fields().forEachRemaining(f -> row.put(f.getKey(), f.getValue().asText()));
                     allData.add(row);
-                    columns.addAll(row.keySet());
+                    currentColumns.addAll(row.keySet());
                 }
             }
-            applyFilter(); // Автоматически обновляем таблицу после загрузки данных
+            updateTable();
         } catch (Exception e) {
-            JOptionPane.showMessageDialog(frame, "Error reading files: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(frame, "Error reading files: " + e.getMessage());
         }
+    }
+
+    private void updateTable() {
+        // determine non-empty columns
+        Set<String> nonEmpty = new TreeSet<>(currentColumns);
+        nonEmpty.removeIf(col -> allData.stream().allMatch(r -> r.getOrDefault(col, "").isEmpty()));
+        currentColumns = nonEmpty;
+
+        // update table model
+        tableModel.setRowCount(0);
+        tableModel.setColumnIdentifiers(nonEmpty.toArray());
+        double total = 0;
+        for (Map<String, String> row : allData) {
+            Object[] rowData = nonEmpty.stream().map(c -> row.getOrDefault(c, "")).toArray();
+            tableModel.addRow(rowData);
+            String sa = row.get("samount");
+            if (sa != null && !sa.isEmpty()) {
+                try { total += Double.parseDouble(sa); } catch (Exception ignored){}
+            }
+        }
+        totalLabel.setText("Total: " + total);
+        adjustColumnWidths();
+    }
+
+    private void buildFilterPanel() {
+        JMenuBar menuBar = new JMenuBar();
+        JPanel mainPanel = new JPanel();
+        mainPanel.setLayout(new BoxLayout(mainPanel, BoxLayout.Y_AXIS));
+        JScrollPane scroll = new JScrollPane(mainPanel);
+        scroll.setPreferredSize(new Dimension(250, frame.getHeight()));
+
+        filterPanels.clear();
+        filterFields.clear();
+        List<String> cols = new ArrayList<>(currentColumns);
+        Collections.sort(cols);
+        for (String col : cols) {
+            JPanel colPanel = new JPanel();
+            colPanel.setLayout(new BoxLayout(colPanel, BoxLayout.Y_AXIS));
+            colPanel.setBorder(BorderFactory.createTitledBorder(col));
+            filterPanels.put(col, colPanel);
+            filterFields.put(col, new ArrayList<>());
+            addFilterField(col);
+            mainPanel.add(colPanel);
+        }
+        JButton apply = new JButton("Apply Filters");
+        apply.addActionListener(e -> applyFilter());
+        mainPanel.add(apply);
+
+        frame.add(scroll, BorderLayout.WEST);
+        frame.revalidate();
+    }
+
+    private void addFilterField(String column) {
+        JPanel colPanel = filterPanels.get(column);
+        List<JTextField> fields = filterFields.get(column);
+        JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        JTextField field = new JTextField(10);
+        field.getDocument().addDocumentListener(new SimpleDocumentListener(() -> {
+            if (fields.get(fields.size() - 1) == field && !field.getText().trim().isEmpty()) {
+                addFilterField(column);
+            }
+        }));
+        fields.add(field);
+        row.add(field);
+        colPanel.add(row);
+        frame.revalidate();
     }
 
     private void applyFilter() {
         tableModel.setRowCount(0);
-        List<Map<String, String>> filteredData = new ArrayList<>();
         double total = 0;
-
         for (Map<String, String> row : allData) {
-            boolean matches = filterFields.entrySet().stream()
-                    .allMatch(entry -> entry.getValue().getText().trim().isEmpty() || entry.getValue().getText().trim().equals(row.getOrDefault(entry.getKey(), "")));
-
-            if (matches) {
-                filteredData.add(row);
-                if (row.containsKey("samount")) {
-                    try {
-                        total += Double.parseDouble(row.get("samount"));
-                    } catch (NumberFormatException ignored) {}
+            boolean keep = true;
+            for (Map.Entry<String, List<JTextField>> e : filterFields.entrySet()) {
+                String col = e.getKey();
+                List<String> vals = new ArrayList<>();
+                for (JTextField f : e.getValue()) {
+                    String t = f.getText().trim();
+                    if (!t.isEmpty()) vals.add(t);
+                }
+                if (!vals.isEmpty()) {
+                    String cell = row.getOrDefault(col, "");
+                    if (!vals.contains(cell)) { keep = false; break; }
+                }
+            }
+            if (keep) {
+                Object[] rd = currentColumns.stream().map(c -> row.getOrDefault(c, "")).toArray();
+                tableModel.addRow(rd);
+                String sa = row.get("samount");
+                if (sa != null && !sa.isEmpty()) {
+                    try { total += Double.parseDouble(sa);}catch(Exception ignored){}
                 }
             }
         }
-
         totalLabel.setText("Total: " + total);
-        updateTable(filteredData);
-    }
-
-    private void updateTable(List<Map<String, String>> visibleData) {
-        tableModel.setRowCount(0);
-
-        // Определяем непустые колонки на основе отфильтрованных данных
-        Set<String> nonEmptyColumns = new LinkedHashSet<>(columns);
-        for (String col : columns) {
-            if (visibleData.stream().noneMatch(row -> row.containsKey(col) && !row.get(col).isEmpty())) {
-                nonEmptyColumns.remove(col);
-            }
-        }
-
-        tableModel.setColumnIdentifiers(nonEmptyColumns.toArray());
-
-        for (Map<String, String> row : visibleData) {
-            Object[] rowData = nonEmptyColumns.stream().map(col -> row.getOrDefault(col, "")).toArray();
-            tableModel.addRow(rowData);
-        }
-
-        adjustColumnWidths();
-        updateFilterFields(nonEmptyColumns);
     }
 
     private void adjustColumnWidths() {
-        for (int col = 0; col < table.getColumnCount(); col++) {
-            TableColumn column = table.getColumnModel().getColumn(col);
-            int width = 75;
-            for (int row = 0; row < table.getRowCount(); row++) {
-                Object value = table.getValueAt(row, col);
-                if (value != null) {
-                    width = Math.max(width, value.toString().length() * 7);
-                }
+        for (int i = 0; i < table.getColumnCount(); i++) {
+            TableColumn col = table.getColumnModel().getColumn(i);
+            int w = 75;
+            for (int r = 0; r < table.getRowCount(); r++) {
+                Object v = table.getValueAt(r, i);
+                if (v != null) w = Math.max(w, v.toString().length() * 7);
             }
-            column.setPreferredWidth(width);
+            col.setPreferredWidth(w);
         }
-    }
-
-    private void updateFilterFields(Set<String> nonEmptyColumns) {
-        // Сохраняем текущие значения фильтров перед обновлением
-        Map<String, String> previousFilters = new HashMap<>();
-        for (Map.Entry<String, JTextField> entry : filterFields.entrySet()) {
-            previousFilters.put(entry.getKey(), entry.getValue().getText());
-        }
-
-        filterFields.clear();
-        filterPanel.removeAll();
-
-        List<String> sortedColumns = new ArrayList<>(nonEmptyColumns);
-        Collections.sort(sortedColumns);
-
-        for (String column : sortedColumns) {
-            JTextField field = new JTextField(10);
-            field.setText(previousFilters.getOrDefault(column, "")); // Восстанавливаем значение фильтра
-            filterFields.put(column, field);
-            JPanel rowPanel = new JPanel();
-            rowPanel.add(new JLabel(column + ":"));
-            rowPanel.add(field);
-            filterPanel.add(rowPanel);
-        }
-
-        JButton filterButton = new JButton("Filter");
-        filterButton.addActionListener(e -> applyFilter());
-        filterPanel.add(filterButton);
-        filterPanel.revalidate();
-        filterPanel.repaint();
     }
 
     public static void main(String[] args) {
         SwingUtilities.invokeLater(JsonViewer::new);
     }
+}
+
+// Helper listener
+class SimpleDocumentListener implements javax.swing.event.DocumentListener {
+    private final Runnable onChange;
+    public SimpleDocumentListener(Runnable onChange) { this.onChange = onChange; }
+    public void insertUpdate(javax.swing.event.DocumentEvent e){ onChange.run(); }
+    public void removeUpdate(javax.swing.event.DocumentEvent e){ onChange.run(); }
+    public void changedUpdate(javax.swing.event.DocumentEvent e){ onChange.run(); }
 }
