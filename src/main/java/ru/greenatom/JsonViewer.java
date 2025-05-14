@@ -2,6 +2,8 @@ package ru.greenatom;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import javax.swing.*;
 import javax.swing.table.DefaultTableCellRenderer;
@@ -22,10 +24,11 @@ public class JsonViewer {
     private final Map<String, List<JTextField>> filterFields = new HashMap<>();
     private final JLabel totalLabel;
     private final List<Map<String, String>> allData = new ArrayList<>();
-    private Set<String> currentColumns = new LinkedHashSet<>();
+    private Set<String> initialColumns = new LinkedHashSet<>();
     private final NumberFormat nf = NumberFormat.getNumberInstance(Locale.getDefault());
+    private Path sourceFolder;
 
-    // Рендерер только для samount
+    // Рендерер для samount
     private final DefaultTableCellRenderer samountRenderer = new DefaultTableCellRenderer() {
         @Override
         public void setValue(Object value) {
@@ -36,7 +39,7 @@ public class JsonViewer {
                     setHorizontalAlignment(SwingConstants.RIGHT);
                     super.setValue(nf.format(d));
                     return;
-                } catch (NumberFormatException ignored) { }
+                } catch (NumberFormatException ignored) {}
             }
             setHorizontalAlignment(SwingConstants.LEFT);
             super.setValue(s);
@@ -58,9 +61,13 @@ public class JsonViewer {
         JButton openButton = new JButton("Open Folder");
         openButton.addActionListener(e -> openFolder());
 
+        JButton saveButton = new JButton("Save Filtered");
+        saveButton.addActionListener(e -> saveFiltered());
+
         JPanel bottomPanel = new JPanel(new BorderLayout());
         bottomPanel.add(openButton, BorderLayout.WEST);
         bottomPanel.add(totalLabel, BorderLayout.CENTER);
+        bottomPanel.add(saveButton, BorderLayout.EAST);
 
         frame.add(new JScrollPane(table), BorderLayout.CENTER);
         frame.add(bottomPanel, BorderLayout.SOUTH);
@@ -72,20 +79,20 @@ public class JsonViewer {
         JFileChooser chooser = new JFileChooser();
         chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
         if (chooser.showOpenDialog(frame) == JFileChooser.APPROVE_OPTION) {
-            Path folder = chooser.getSelectedFile().toPath();
-            loadJsonFiles(folder);
+            sourceFolder = chooser.getSelectedFile().toPath();
+            loadJsonFiles(sourceFolder);
             buildFilterPanel();
         }
     }
 
     private void loadJsonFiles(Path folder) {
         allData.clear();
-        currentColumns.clear();
+        initialColumns.clear();
         ObjectMapper mapper = new ObjectMapper();
 
         try {
             List<Path> files = Files.list(folder)
-                    .filter(path -> path.toString().endsWith(".json") || !path.toString().contains("."))
+                    .filter(path -> path.toString().endsWith(".json"))
                     .toList();
 
             for (Path file : files) {
@@ -105,43 +112,13 @@ public class JsonViewer {
                     row.put("gaperiod", gaperiod);
                     item.fields().forEachRemaining(f -> row.put(f.getKey(), f.getValue().asText()));
                     allData.add(row);
-                    currentColumns.addAll(row.keySet());
+                    initialColumns.addAll(row.keySet());
                 }
             }
-            updateTable();
+            updateTable(allData);
         } catch (Exception e) {
             JOptionPane.showMessageDialog(frame, "Error reading files: " + e.getMessage());
         }
-    }
-
-    private void updateTable() {
-        // Отбрасываем пустые колонки
-        Set<String> nonEmpty = new TreeSet<>(currentColumns);
-        nonEmpty.removeIf(col -> allData.stream().allMatch(r -> r.getOrDefault(col, "").isEmpty()));
-        currentColumns = nonEmpty;
-
-        // Обновляем модель
-        tableModel.setRowCount(0);
-        tableModel.setColumnIdentifiers(nonEmpty.toArray());
-        double total = 0;
-        for (Map<String, String> row : allData) {
-            Object[] rowData = nonEmpty.stream().map(c -> row.getOrDefault(c, "")).toArray();
-            tableModel.addRow(rowData);
-            String sa = row.get("samount");
-            if (sa != null && !sa.isEmpty()) {
-                try { total += Double.parseDouble(sa); } catch (Exception ignored) {}
-            }
-        }
-        totalLabel.setText("Total: " + nf.format(total));
-
-        // Устанавливаем рендерер только для столбца samount
-        int idx = tableModel.findColumn("samount");
-        if (idx != -1) {
-            TableColumn col = table.getColumnModel().getColumn(idx);
-            col.setCellRenderer(samountRenderer);
-        }
-
-        adjustColumnWidths();
     }
 
     private void buildFilterPanel() {
@@ -152,7 +129,7 @@ public class JsonViewer {
 
         filterPanels.clear();
         filterFields.clear();
-        List<String> cols = new ArrayList<>(currentColumns);
+        List<String> cols = new ArrayList<>(initialColumns);
         Collections.sort(cols);
         for (String col : cols) {
             JPanel colPanel = new JPanel();
@@ -188,39 +165,135 @@ public class JsonViewer {
     }
 
     private void applyFilter() {
-        tableModel.setRowCount(0);
-        double total = 0;
+        // Собираем список отфильтрованных строк
+        List<Map<String, String>> filtered = new ArrayList<>();
         for (Map<String, String> row : allData) {
-            boolean keep = true;
-            for (Map.Entry<String, List<JTextField>> e : filterFields.entrySet()) {
-                String col = e.getKey();
-                List<String> vals = new ArrayList<>();
-                for (JTextField f : e.getValue()) {
-                    String t = f.getText().trim();
-                    if (!t.isEmpty()) vals.add(t);
-                }
-                if (!vals.isEmpty() && !vals.contains(row.getOrDefault(col, ""))) {
-                    keep = false;
-                    break;
-                }
+            if (rowMatchesFilter(row)) {
+                filtered.add(row);
             }
-            if (keep) {
-                Object[] rd = currentColumns.stream().map(c -> row.getOrDefault(c, "")).toArray();
-                tableModel.addRow(rd);
-                String sa = row.get("samount");
-                if (sa != null && !sa.isEmpty()) {
-                    try { total += Double.parseDouble(sa); } catch(Exception ignored){}
-                }
+        }
+        updateTable(filtered);
+    }
+
+    private void updateTable(List<Map<String, String>> data) {
+        // Определяем активность фильтра
+        boolean filterActive = filterFields.values().stream()
+                .flatMap(List::stream)
+                .anyMatch(f -> !f.getText().trim().isEmpty());
+
+        // Выбираем колонки: если фильтр неактивен, показываем все
+        Set<String> cols = new TreeSet<>(initialColumns);
+        if (filterActive) {
+            cols.removeIf(col -> data.stream().allMatch(r -> r.getOrDefault(col, "").isEmpty()));
+        }
+
+        tableModel.setRowCount(0);
+        tableModel.setColumnIdentifiers(cols.toArray());
+
+        double total = 0;
+        for (Map<String, String> row : data) {
+            Object[] rd = cols.stream().map(c -> row.getOrDefault(c, "")).toArray();
+            tableModel.addRow(rd);
+            String sa = row.get("samount");
+            if (sa != null && !sa.isEmpty()) {
+                try { total += Double.parseDouble(sa); } catch (Exception ignored) {}
             }
         }
         totalLabel.setText("Total: " + nf.format(total));
 
-        // повторно применим рендерер на случай изменения столбцов
         int idx = tableModel.findColumn("samount");
         if (idx != -1) {
             TableColumn col = table.getColumnModel().getColumn(idx);
             col.setCellRenderer(samountRenderer);
         }
+
+        adjustColumnWidths();
+    }
+
+    private boolean rowMatchesFilter(Map<String, String> row) {
+        for (Map.Entry<String, List<JTextField>> e : filterFields.entrySet()) {
+            String col = e.getKey();
+            List<String> vals = new ArrayList<>();
+            for (JTextField f : e.getValue()) {
+                String t = f.getText().trim();
+                if (!t.isEmpty()) vals.add(t);
+            }
+            if (!vals.isEmpty() && !vals.contains(row.getOrDefault(col, ""))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private void saveFiltered() {
+        if (sourceFolder == null) return;
+        JFileChooser chooser = new JFileChooser();
+        chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+        if (chooser.showSaveDialog(frame) != JFileChooser.APPROVE_OPTION) return;
+        Path targetFolder = chooser.getSelectedFile().toPath();
+        ObjectMapper mapper = new ObjectMapper();
+
+        // Определяем фильтр по structure
+        List<String> structFilter = new ArrayList<>();
+        if (filterFields.containsKey("structure")) {
+            for (JTextField f : filterFields.get("structure")) {
+                String t = f.getText().trim();
+                if (!t.isEmpty()) structFilter.add(t);
+            }
+        }
+
+        try {
+            Files.createDirectories(targetFolder);
+            List<Path> files = Files.list(sourceFolder)
+                    .filter(p -> p.toString().endsWith(".json"))
+                    .toList();
+
+            for (Path file : files) {
+                JsonNode root = mapper.readTree(file.toFile());
+                if (!root.has("data")) continue;
+                String fileStruct = root.has("structure") ? root.get("structure").asText() : "";
+
+                ArrayNode filtered = mapper.createArrayNode();
+                // Если фильтр по structure задан и структура файла не подходит — оставляем empty
+                boolean includeData = structFilter.isEmpty() || structFilter.contains(fileStruct);
+                if (includeData) {
+                    ArrayNode data = (ArrayNode) root.get("data");
+                    for (JsonNode item : data) {
+                        if (nodeMatchesFilter(item)) filtered.add(item);
+                    }
+                }
+
+                ((ObjectNode) root).set("data", filtered);
+                Path out = targetFolder.resolve(file.getFileName());
+                mapper.writerWithDefaultPrettyPrinter().writeValue(out.toFile(), root);
+            }
+
+            JOptionPane.showMessageDialog(frame, "Saved to: " + targetFolder);
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(frame, "Error saving files: " + ex.getMessage());
+        }
+    }
+
+    private boolean nodeMatchesFilter(JsonNode item) {
+        for (Map.Entry<String, List<JTextField>> e : filterFields.entrySet()) {
+            String col = e.getKey();
+            List<String> allowed = new ArrayList<>();
+            for (JTextField f : e.getValue()) {
+                String t = f.getText().trim();
+                if (!t.isEmpty()) allowed.add(t);
+            }
+            if (!allowed.isEmpty()) {
+                String value;
+                if (col.equals("structure")) {
+                    // используем корневое поле structure, а не в item
+                    value = item.has(col) ? item.get(col).asText() : "";
+                } else {
+                    value = item.has(col) ? item.get(col).asText() : "";
+                }
+                if (!allowed.contains(value)) return false;
+            }
+        }
+        return true;
     }
 
     private void adjustColumnWidths() {
