@@ -4,15 +4,15 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import javax.swing.*;
+import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
 import javax.swing.table.TableColumn;
 import java.awt.*;
-import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.text.NumberFormat;
 import java.util.*;
 import java.util.List;
-import java.util.stream.Collectors;
 
 public class JsonViewer {
     private final JFrame frame;
@@ -23,6 +23,25 @@ public class JsonViewer {
     private final JLabel totalLabel;
     private final List<Map<String, String>> allData = new ArrayList<>();
     private Set<String> currentColumns = new LinkedHashSet<>();
+    private final NumberFormat nf = NumberFormat.getNumberInstance(Locale.getDefault());
+
+    // Рендерер только для samount
+    private final DefaultTableCellRenderer samountRenderer = new DefaultTableCellRenderer() {
+        @Override
+        public void setValue(Object value) {
+            String s = Objects.toString(value, "");
+            if (s.matches("-?\\d+(\\.\\d+)?")) {
+                try {
+                    double d = Double.parseDouble(s);
+                    setHorizontalAlignment(SwingConstants.RIGHT);
+                    super.setValue(nf.format(d));
+                    return;
+                } catch (NumberFormatException ignored) { }
+            }
+            setHorizontalAlignment(SwingConstants.LEFT);
+            super.setValue(s);
+        }
+    };
 
     public JsonViewer() {
         frame = new JFrame("JSON Viewer");
@@ -34,12 +53,14 @@ public class JsonViewer {
         table = new JTable(tableModel);
 
         totalLabel = new JLabel("Total: 0");
+        totalLabel.setHorizontalAlignment(SwingConstants.CENTER);
+
         JButton openButton = new JButton("Open Folder");
         openButton.addActionListener(e -> openFolder());
 
-        JPanel bottomPanel = new JPanel();
-        bottomPanel.add(openButton);
-        bottomPanel.add(totalLabel);
+        JPanel bottomPanel = new JPanel(new BorderLayout());
+        bottomPanel.add(openButton, BorderLayout.WEST);
+        bottomPanel.add(totalLabel, BorderLayout.CENTER);
 
         frame.add(new JScrollPane(table), BorderLayout.CENTER);
         frame.add(bottomPanel, BorderLayout.SOUTH);
@@ -94,12 +115,12 @@ public class JsonViewer {
     }
 
     private void updateTable() {
-        // determine non-empty columns
+        // Отбрасываем пустые колонки
         Set<String> nonEmpty = new TreeSet<>(currentColumns);
         nonEmpty.removeIf(col -> allData.stream().allMatch(r -> r.getOrDefault(col, "").isEmpty()));
         currentColumns = nonEmpty;
 
-        // update table model
+        // Обновляем модель
         tableModel.setRowCount(0);
         tableModel.setColumnIdentifiers(nonEmpty.toArray());
         double total = 0;
@@ -108,15 +129,22 @@ public class JsonViewer {
             tableModel.addRow(rowData);
             String sa = row.get("samount");
             if (sa != null && !sa.isEmpty()) {
-                try { total += Double.parseDouble(sa); } catch (Exception ignored){}
+                try { total += Double.parseDouble(sa); } catch (Exception ignored) {}
             }
         }
-        totalLabel.setText("Total: " + total);
+        totalLabel.setText("Total: " + nf.format(total));
+
+        // Устанавливаем рендерер только для столбца samount
+        int idx = tableModel.findColumn("samount");
+        if (idx != -1) {
+            TableColumn col = table.getColumnModel().getColumn(idx);
+            col.setCellRenderer(samountRenderer);
+        }
+
         adjustColumnWidths();
     }
 
     private void buildFilterPanel() {
-        JMenuBar menuBar = new JMenuBar();
         JPanel mainPanel = new JPanel();
         mainPanel.setLayout(new BoxLayout(mainPanel, BoxLayout.Y_AXIS));
         JScrollPane scroll = new JScrollPane(mainPanel);
@@ -171,9 +199,9 @@ public class JsonViewer {
                     String t = f.getText().trim();
                     if (!t.isEmpty()) vals.add(t);
                 }
-                if (!vals.isEmpty()) {
-                    String cell = row.getOrDefault(col, "");
-                    if (!vals.contains(cell)) { keep = false; break; }
+                if (!vals.isEmpty() && !vals.contains(row.getOrDefault(col, ""))) {
+                    keep = false;
+                    break;
                 }
             }
             if (keep) {
@@ -181,11 +209,18 @@ public class JsonViewer {
                 tableModel.addRow(rd);
                 String sa = row.get("samount");
                 if (sa != null && !sa.isEmpty()) {
-                    try { total += Double.parseDouble(sa);}catch(Exception ignored){}
+                    try { total += Double.parseDouble(sa); } catch(Exception ignored){}
                 }
             }
         }
-        totalLabel.setText("Total: " + total);
+        totalLabel.setText("Total: " + nf.format(total));
+
+        // повторно применим рендерер на случай изменения столбцов
+        int idx = tableModel.findColumn("samount");
+        if (idx != -1) {
+            TableColumn col = table.getColumnModel().getColumn(idx);
+            col.setCellRenderer(samountRenderer);
+        }
     }
 
     private void adjustColumnWidths() {
@@ -205,7 +240,7 @@ public class JsonViewer {
     }
 }
 
-// Helper listener
+// Вспомогательный слушатель
 class SimpleDocumentListener implements javax.swing.event.DocumentListener {
     private final Runnable onChange;
     public SimpleDocumentListener(Runnable onChange) { this.onChange = onChange; }
