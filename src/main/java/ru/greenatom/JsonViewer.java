@@ -171,7 +171,10 @@ public class JsonViewer {
                 .anyMatch(f -> !f.getText().trim().isEmpty());
         Set<String> cols = new TreeSet<>(initialColumns);
         if (filterActive) {
-            cols.removeIf(col -> data.stream().allMatch(r -> r.getOrDefault(col, "").isEmpty()));
+            cols.removeIf(col -> data.stream().allMatch(r -> {
+                String val = r.getOrDefault(col, "");
+                return val.isEmpty() || val.equals("0") || val.equals("#");
+            }));
         }
         tableModel.setRowCount(0);
         tableModel.setColumnIdentifiers(cols.toArray());
