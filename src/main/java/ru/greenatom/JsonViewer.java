@@ -53,6 +53,7 @@ public class JsonViewer {
 
         tableModel = new DefaultTableModel();
         table = new JTable(tableModel);
+        table.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
 
         totalLabel = new JLabel("Total: 0");
         totalLabel.setHorizontalAlignment(SwingConstants.CENTER);
