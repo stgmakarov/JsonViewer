@@ -4,17 +4,24 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 
 import javax.swing.*;
 import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
 import javax.swing.table.TableColumn;
 import java.awt.*;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.text.NumberFormat;
 import java.util.*;
 import java.util.List;
+
+import static org.apache.poi.ss.util.CellUtil.createCell;
 
 public class JsonViewer {
     private final JFrame frame;
@@ -64,10 +71,14 @@ public class JsonViewer {
         JButton saveButton = new JButton("Save Filtered");
         saveButton.addActionListener(e -> saveFiltered());
 
+        JButton saveExcelButton = new JButton("Save Excel");
+        saveExcelButton.addActionListener(e -> saveExcel());
+
         JPanel bottomPanel = new JPanel(new BorderLayout());
         bottomPanel.add(openButton, BorderLayout.WEST);
         bottomPanel.add(totalLabel, BorderLayout.CENTER);
         bottomPanel.add(saveButton, BorderLayout.EAST);
+        bottomPanel.add(saveExcelButton, BorderLayout.AFTER_LAST_LINE);
 
         frame.add(new JScrollPane(table), BorderLayout.CENTER);
         frame.add(bottomPanel, BorderLayout.SOUTH);
@@ -278,6 +289,57 @@ public class JsonViewer {
             col.setPreferredWidth(w);
         }
     }
+
+    private void saveExcel() {
+        if (sourceFolder == null) return;
+        JFileChooser chooser = new JFileChooser();
+        chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+        if (chooser.showSaveDialog(frame) != JFileChooser.APPROVE_OPTION) return;
+        Path targetFolder = chooser.getSelectedFile().toPath();
+
+        Workbook workBook = new XSSFWorkbook();
+        Sheet sheet = workBook.createSheet();
+
+        // Серый бэкграунд для хедера
+        CellStyle greyCellStyle  = workBook.createCellStyle();
+        greyCellStyle.setFillForegroundColor(IndexedColors.GREY_25_PERCENT.index);
+        greyCellStyle.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+
+        // Формируем хедер
+        Row headerRow = sheet.createRow(0);
+        for (int c = 0; c < table.getColumnCount(); c++) {
+            Cell cell = headerRow.createCell(c);
+            cell.setCellValue(table.getColumnName(c));
+            cell.setCellStyle(greyCellStyle);
+        }
+        // Формируем боди
+        for (int r = 0; r < table.getRowCount(); r++) {
+            Row row = sheet.createRow(r+1);
+            for (int c = 0; c < table.getColumnCount(); c++) {
+                Cell cell = row.createCell(c);
+                Object v = table.getValueAt(r, c);
+                if (table.getColumnName(c).equals("samount")) {
+                    double d = Double.parseDouble(v.toString());
+                    cell.setCellType(CellType.NUMERIC);
+                    cell.setCellValue(d);
+                } else cell.setCellValue(v.toString());
+            }
+        }
+
+        // Выравниваем колонки по ширине
+        for (int c = 0; c < table.getColumnCount(); c++) {
+            sheet.autoSizeColumn(c);
+        }
+
+        try (OutputStream targetFile = new FileOutputStream(targetFolder + File.separator + "export.xlsx")) {
+            workBook.write(targetFile);
+            workBook.close();
+            JOptionPane.showMessageDialog(frame, "Saved to: " + targetFolder + File.separator + "export.xlsx");
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(frame, "Error saving files: " + ex.getMessage());
+        }
+    }
+
 
     public static void main(String[] args) {
         SwingUtilities.invokeLater(JsonViewer::new);
