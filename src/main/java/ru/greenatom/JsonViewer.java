@@ -34,6 +34,7 @@ public class JsonViewer {
     private Set<String> initialColumns = new LinkedHashSet<>();
     private final NumberFormat nf = NumberFormat.getNumberInstance(Locale.getDefault());
     private Path sourceFolder;
+    private Path targetFolder;
 
     private final DefaultTableCellRenderer samountRenderer = new DefaultTableCellRenderer() {
         @Override
@@ -226,13 +227,13 @@ public class JsonViewer {
         if (chooser.showSaveDialog(frame) != JFileChooser.APPROVE_OPTION) {
             return null;
         } else {
-            return chooser.getSelectedFile().toPath();
+            return targetFolder = chooser.getSelectedFile().toPath();
         }
     }
 
     private void saveFiltered() {
         if (sourceFolder == null) return;
-        Path targetFolder = getTargetFolder();
+        targetFolder = getTargetFolder();
         ObjectMapper mapper = new ObjectMapper();
 
         List<String> structFilter = new ArrayList<>();
@@ -299,7 +300,8 @@ public class JsonViewer {
 
     private void saveExcel() {
         if (sourceFolder == null) return;
-        Path targetFolder = getTargetFolder();
+        targetFolder = getTargetFolder();
+        if (targetFolder == null) return;
 
         Workbook workBook = new XSSFWorkbook();
         Sheet sheet = workBook.createSheet();
