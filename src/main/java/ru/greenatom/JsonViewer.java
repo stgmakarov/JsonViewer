@@ -220,12 +220,19 @@ public class JsonViewer {
         return true;
     }
 
-    private void saveFiltered() {
-        if (sourceFolder == null) return;
+    private Path getTargetFolder() {
         JFileChooser chooser = new JFileChooser();
         chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
-        if (chooser.showSaveDialog(frame) != JFileChooser.APPROVE_OPTION) return;
-        Path targetFolder = chooser.getSelectedFile().toPath();
+        if (chooser.showSaveDialog(frame) != JFileChooser.APPROVE_OPTION) {
+            return null;
+        } else {
+            return chooser.getSelectedFile().toPath();
+        }
+    }
+
+    private void saveFiltered() {
+        if (sourceFolder == null) return;
+        Path targetFolder = getTargetFolder();
         ObjectMapper mapper = new ObjectMapper();
 
         List<String> structFilter = new ArrayList<>();
@@ -292,10 +299,7 @@ public class JsonViewer {
 
     private void saveExcel() {
         if (sourceFolder == null) return;
-        JFileChooser chooser = new JFileChooser();
-        chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
-        if (chooser.showSaveDialog(frame) != JFileChooser.APPROVE_OPTION) return;
-        Path targetFolder = chooser.getSelectedFile().toPath();
+        Path targetFolder = getTargetFolder();
 
         Workbook workBook = new XSSFWorkbook();
         Sheet sheet = workBook.createSheet();
