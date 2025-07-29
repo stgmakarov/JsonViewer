@@ -21,8 +21,6 @@ import java.text.NumberFormat;
 import java.util.*;
 import java.util.List;
 
-import static org.apache.poi.ss.util.CellUtil.createCell;
-
 public class JsonViewer {
     private final JFrame frame;
     private final JTable table;
