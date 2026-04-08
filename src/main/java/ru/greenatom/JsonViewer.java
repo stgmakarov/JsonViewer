@@ -15,6 +15,7 @@ import java.nio.file.Path;
 import java.text.NumberFormat;
 import java.util.*;
 import java.util.List;
+import java.util.stream.Stream;
 
 public class JsonViewer {
     private final JFrame frame;
@@ -90,22 +91,32 @@ public class JsonViewer {
         ObjectMapper mapper = new ObjectMapper();
 
         try {
-            List<Path> files = Files.list(folder)
-                    .filter(path -> path.toString().endsWith(".json"))
-                    .toList();
+            List<Path> files = listSourceFiles(folder);
             for (Path file : files) {
                 JsonNode root = mapper.readTree(file.toFile());
-                if (!root.has("structure") || !root.has("data")) continue;
+                if (!root.has("structure")) continue;
                 String structure = root.get("structure").asText();
                 if (structure.startsWith("ga01") || structure.startsWith("ga20")) continue;
                 String gaentity = root.has("gaentity") ? root.get("gaentity").asText() : "";
                 String gaperiod = root.has("gaperiod") ? root.get("gaperiod").asText() : "";
-                for (JsonNode item : root.get("data")) {
+
+                JsonNode dataArray = null;
+                boolean isNiFiFormat = false;
+                if (root.has("niFiTDataLines") && root.get("niFiTDataLines").isArray()) {
+                    dataArray = root.get("niFiTDataLines");
+                    isNiFiFormat = true;
+                } else if (root.has("data") && root.get("data").isArray()) {
+                    dataArray = root.get("data");
+                }
+                if (dataArray == null) continue;
+
+                for (JsonNode item : dataArray) {
                     Map<String, String> row = new HashMap<>();
                     row.put("structure", structure);
                     row.put("gaentity", gaentity);
                     row.put("gaperiod", gaperiod);
-                    item.fields().forEachRemaining(f -> row.put(f.getKey(), f.getValue().asText()));
+                    JsonNode fields = isNiFiFormat && item.has("chars") ? item.get("chars") : item;
+                    fields.fields().forEachRemaining(f -> row.put(f.getKey(), f.getValue().asText()));
                     allData.add(row);
                     initialColumns.addAll(row.keySet());
                 }
@@ -114,6 +125,30 @@ public class JsonViewer {
         } catch (Exception e) {
             JOptionPane.showMessageDialog(frame, "Error reading files: " + e.getMessage());
         }
+    }
+
+    private List<Path> listSourceFiles(Path folder) throws Exception {
+        try (Stream<Path> stream = Files.list(folder)) {
+            return stream
+                    .filter(Files::isRegularFile)
+                    .filter(this::isJsonSourceFile)
+                    .sorted()
+                    .toList();
+        }
+    }
+
+    private boolean isJsonSourceFile(Path path) {
+        String fileName = path.getFileName().toString();
+        int dotIndex = fileName.lastIndexOf('.');
+        return dotIndex == -1 || fileName.substring(dotIndex).equalsIgnoreCase(".json");
+    }
+
+    private Path buildOutputFilePath(Path targetFolder, Path sourceFile) {
+        String fileName = sourceFile.getFileName().toString();
+        if (fileName.lastIndexOf('.') == -1) {
+            fileName += ".json";
+        }
+        return targetFolder.resolve(fileName);
     }
 
     private void buildFilterPanel() {
@@ -225,24 +260,25 @@ public class JsonViewer {
 
         try {
             Files.createDirectories(targetFolder);
-            List<Path> files = Files.list(sourceFolder)
-                    .filter(p -> p.toString().endsWith(".json"))
-                    .toList();
+            List<Path> files = listSourceFiles(sourceFolder);
             for (Path file : files) {
                 JsonNode root = mapper.readTree(file.toFile());
-                // Гарантируем, что корнево поле data будет массивом после сохранения
                 ArrayNode filtered = mapper.createArrayNode();
                 String fileStruct = root.has("structure") ? root.get("structure").asText() : "";
                 boolean includeData = structFilter.isEmpty() || structFilter.contains(fileStruct);
-                if (includeData && root.has("data") && root.get("data").isArray()) {
-                    ArrayNode data = (ArrayNode) root.get("data");
+
+                boolean isNiFiFormat = root.has("niFiTDataLines") && root.get("niFiTDataLines").isArray();
+                String arrayField = isNiFiFormat ? "niFiTDataLines" : "data";
+
+                if (includeData && root.has(arrayField) && root.get(arrayField).isArray()) {
+                    ArrayNode data = (ArrayNode) root.get(arrayField);
                     for (JsonNode item : data) {
-                        if (nodeMatchesFilter(item)) filtered.add(item);
+                        JsonNode fieldsToCheck = isNiFiFormat && item.has("chars") ? item.get("chars") : item;
+                        if (nodeMatchesFilter(fieldsToCheck)) filtered.add(item);
                     }
                 }
-                // Ставим даже если не было data
-                ((ObjectNode) root).set("data", filtered);
-                Path out = targetFolder.resolve(file.getFileName());
+                ((ObjectNode) root).set(arrayField, filtered);
+                Path out = buildOutputFilePath(targetFolder, file);
                 mapper.writerWithDefaultPrettyPrinter().writeValue(out.toFile(), root);
             }
             JOptionPane.showMessageDialog(frame, "Saved to: " + targetFolder);
