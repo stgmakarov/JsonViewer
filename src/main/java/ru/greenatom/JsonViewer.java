@@ -261,8 +261,10 @@ public class JsonViewer {
         try {
             Files.createDirectories(targetFolder);
             List<Path> files = listSourceFiles(sourceFolder);
+            List<SaveCandidate> filesToSave = new ArrayList<>();
             for (Path file : files) {
-                JsonNode root = mapper.readTree(file.toFile());
+                JsonNode parsedRoot = mapper.readTree(file.toFile());
+                if (!(parsedRoot instanceof ObjectNode root)) continue;
                 ArrayNode filtered = mapper.createArrayNode();
                 String fileStruct = root.has("structure") ? root.get("structure").asText() : "";
                 boolean includeData = structFilter.isEmpty() || structFilter.contains(fileStruct);
@@ -277,15 +279,48 @@ public class JsonViewer {
                         if (nodeMatchesFilter(fieldsToCheck)) filtered.add(item);
                     }
                 }
-                ((ObjectNode) root).set(arrayField, filtered);
-                Path out = buildOutputFilePath(targetFolder, file);
-                mapper.writerWithDefaultPrettyPrinter().writeValue(out.toFile(), root);
+                if (!filtered.isEmpty()) {
+                    filesToSave.add(new SaveCandidate(file, root, arrayField, fileStruct, filtered));
+                }
+            }
+
+            ArrayNode existingParts = buildAllPartsNode(
+                    filesToSave.stream().map(SaveCandidate::structure).toList(),
+                    mapper
+            );
+
+            for (SaveCandidate candidate : filesToSave) {
+                candidate.root().set("allParts", existingParts.deepCopy());
+                candidate.root().set(candidate.arrayField(), candidate.filteredData());
+                Path out = buildOutputFilePath(targetFolder, candidate.sourceFile());
+                mapper.writerWithDefaultPrettyPrinter().writeValue(out.toFile(), candidate.root());
             }
             JOptionPane.showMessageDialog(frame, "Saved to: " + targetFolder);
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(frame, "Error saving files: " + ex.getMessage());
         }
     }
+
+    private ArrayNode buildAllPartsNode(List<String> structures, ObjectMapper mapper) {
+        Set<String> existingParts = new LinkedHashSet<>();
+        for (String structure : structures) {
+            if (!structure.isBlank()) {
+                existingParts.add(structure);
+            }
+        }
+
+        ArrayNode allParts = mapper.createArrayNode();
+        existingParts.forEach(allParts::add);
+        return allParts;
+    }
+
+    private record SaveCandidate(
+            Path sourceFile,
+            ObjectNode root,
+            String arrayField,
+            String structure,
+            ArrayNode filteredData
+    ) {}
 
     private boolean nodeMatchesFilter(JsonNode item) {
         for (var e : filterFields.entrySet()) {
